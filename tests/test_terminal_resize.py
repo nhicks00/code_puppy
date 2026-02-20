@@ -15,6 +15,7 @@ from code_puppy.terminal_utils import (
     install_sigwinch_handler,
     is_sigwinch_handler_installed,
     refresh_terminal_on_resize,
+    scroll_to_bottom,
     uninstall_sigwinch_handler,
 )
 
@@ -216,3 +217,38 @@ class TestWindowsSigwinch:
         """Test that uninstall returns False on Windows."""
         result = uninstall_sigwinch_handler()
         assert result is False
+
+
+class TestScrollToBottom:
+    """Tests for scroll_to_bottom function."""
+
+    @pytest.mark.skipif(platform.system() == "Windows", reason="Unix-only test")
+    def test_writes_ansi_sequences(self):
+        """Test that scroll_to_bottom writes ANSI escape sequences on Unix."""
+        with patch("code_puppy.terminal_utils.sys.stdout") as mock_stdout:
+            with patch(
+                "code_puppy.terminal_utils.shutil.get_terminal_size"
+            ) as mock_size:
+                mock_size.return_value = MagicMock(lines=24, columns=80)
+                scroll_to_bottom()
+                mock_stdout.write.assert_called()
+                mock_stdout.flush.assert_called()
+                # Verify ANSI sequences include cursor positioning
+                call_args = mock_stdout.write.call_args[0][0]
+                assert "\x1b[" in call_args
+                assert "24" in call_args  # Should reference row 24
+
+    @pytest.mark.skipif(platform.system() != "Windows", reason="Windows-only test")
+    def test_no_op_on_windows(self):
+        """Test that scroll_to_bottom is a no-op on Windows."""
+        with patch("code_puppy.terminal_utils.sys.stdout") as mock_stdout:
+            scroll_to_bottom()
+            mock_stdout.write.assert_not_called()
+
+    @pytest.mark.skipif(platform.system() == "Windows", reason="Unix-only test")
+    def test_handles_io_errors_gracefully(self):
+        """Test that I/O errors during scroll don't raise exceptions."""
+        with patch("code_puppy.terminal_utils.sys.stdout") as mock_stdout:
+            mock_stdout.write.side_effect = IOError("Terminal write failed")
+            # Should not raise
+            scroll_to_bottom()

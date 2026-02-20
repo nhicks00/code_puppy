@@ -162,6 +162,37 @@ def reset_terminal() -> None:
         reset_unix_terminal()
 
 
+def scroll_to_bottom() -> None:
+    """Scroll terminal so cursor is at the bottom of the screen.
+
+    This is useful after operations (like cancellation) that leave the cursor
+    mid-screen with empty space below. Uses ANSI escape sequences to:
+    1. Move cursor to bottom of screen
+    2. Scroll up to make room for new content
+    3. Clear any artifacts below cursor
+
+    This prevents the "floating prompt" issue where the input line appears
+    in the middle of the terminal with empty space below.
+    """
+    if platform.system() == "Windows":
+        # Windows handles this differently via console mode
+        return
+
+    try:
+        # Get terminal size
+        size = shutil.get_terminal_size()
+        rows = size.lines
+
+        # ANSI sequences:
+        # \x1b[{rows};1H - Move cursor to last row, column 1
+        # \x1b[J - Clear from cursor to end of screen
+        # \n - Print newline to scroll content up and position cursor
+        sys.stdout.write(f"\x1b[{rows};1H\x1b[J\n")
+        sys.stdout.flush()
+    except Exception:
+        pass  # Best effort - don't crash on I/O errors
+
+
 def disable_windows_ctrl_c() -> bool:
     """Disable Ctrl+C processing at the Windows console input level.
 

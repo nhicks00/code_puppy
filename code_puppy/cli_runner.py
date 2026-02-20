@@ -46,6 +46,7 @@ from code_puppy.terminal_utils import (
     reset_unix_terminal,
     reset_windows_terminal_ansi,
     reset_windows_terminal_full,
+    scroll_to_bottom,
 )
 from code_puppy.tools.common import console
 from code_puppy.version_checker import default_version_mismatch_behavior
@@ -747,6 +748,8 @@ async def interactive_mode(message_renderer, initial_command: str = None) -> Non
                 if result is None:
                     # Windows-specific: Reset terminal state after cancellation
                     reset_windows_terminal_ansi()
+                    # Unix: Scroll terminal so cursor is at bottom (prevents floating prompt)
+                    scroll_to_bottom()
                     # Re-disable Ctrl+C if needed (uvx mode)
                     try:
                         from code_puppy.terminal_utils import ensure_ctrl_c_disabled
