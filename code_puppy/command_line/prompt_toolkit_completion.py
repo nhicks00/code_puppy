@@ -801,6 +801,26 @@ async def get_input_with_combined_completion(
         key_bindings=bindings,
         input_processors=[AttachmentPlaceholderProcessor()],
     )
+
+    # Patch Application's _on_resize to force a full redraw on terminal resize.
+    # By default, prompt_toolkit uses differential rendering which only updates
+    # what changed. But on terminals like Ghostty/Kitty that don't auto-reflow
+    # scrollback on resize, the old rendering stays visible and the new one
+    # gets drawn at incorrect positions, causing prompt duplication and empty
+    # space. Resetting the renderer forces a clean full redraw.
+    _original_on_resize = session.app._on_resize
+
+    def _patched_on_resize():
+        renderer = getattr(session.app, "renderer", None)
+        if renderer is not None:
+            try:
+                renderer.erase()  # Clear old prompt rendering from terminal
+                renderer.reset()  # Forget previous state → force full redraw
+            except Exception:
+                pass
+        _original_on_resize()
+
+    session.app._on_resize = _patched_on_resize
     # If they pass a string, backward-compat: convert it to formatted_text
     if isinstance(prompt_str, str):
         from prompt_toolkit.formatted_text import FormattedText
@@ -820,6 +840,23 @@ async def get_input_with_combined_completion(
         }
     )
     text = await session.prompt_async(prompt_str, style=style)
+
+    # Re-install SIGWINCH handler after prompt_toolkit returns.
+    # prompt_toolkit installs its own SIGWINCH handler via asyncio's
+    # loop.add_signal_handler() during prompt_async(), which replaces ours.
+    # When it finishes, it removes its handler but does NOT restore ours.
+    # We must re-install to catch resize events between prompts.
+    try:
+        from code_puppy.terminal_utils import install_sigwinch_handler
+
+        # Force re-install by resetting the flag
+        import code_puppy.terminal_utils as _tu
+
+        _tu._resize_handler_installed = False
+        install_sigwinch_handler()
+    except Exception:
+        pass
+
     # NOTE: We used to call update_model_in_input(text) here to handle /model and /m
     # commands at the prompt level, but that prevented the command handler from running
     # and emitting success messages. Now we let all /model commands fall through to
