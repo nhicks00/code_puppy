@@ -802,22 +802,42 @@ async def get_input_with_combined_completion(
         input_processors=[AttachmentPlaceholderProcessor()],
     )
 
-    # Patch Application's _on_resize to force a full redraw on terminal resize.
-    # By default, prompt_toolkit uses differential rendering which only updates
-    # what changed. But on terminals like Ghostty/Kitty that don't auto-reflow
-    # scrollback on resize, the old rendering stays visible and the new one
-    # gets drawn at incorrect positions, causing prompt duplication and empty
-    # space. Resetting the renderer forces a clean full redraw.
+    # Patch Application's _on_resize to fix display corruption on resize.
+    #
+    # Problem: On terminals like Ghostty and Kitty, when the user has scrolled
+    # up in the scrollback buffer and the terminal resizes (e.g., monitor
+    # change), the old prompt rendering stays visible at stale positions.
+    # prompt_toolkit's default _on_resize just calls invalidate() which does
+    # a differential redraw — it can't fix content that's already on screen
+    # in the wrong place.
+    #
+    # Fix: Write ANSI escape sequences directly to stdout's file descriptor
+    # (bypassing ALL Python and prompt_toolkit buffering), then reset the
+    # renderer so it does a full redraw from scratch.
     _original_on_resize = session.app._on_resize
 
     def _patched_on_resize():
+        import os
+        import shutil
+
+        try:
+            size = shutil.get_terminal_size()
+            # Write directly to fd 1 (stdout), bypassing all buffers.
+            # \x1b[2J    - Clear entire visible screen (not scrollback)
+            # \x1b[{r};1H - Move cursor to bottom row, column 1
+            os.write(1, f"\x1b[2J\x1b[{size.lines};1H".encode())
+        except Exception:
+            pass
+
+        # Reset renderer state so it forgets what was previously drawn
+        # and does a full redraw instead of a differential one.
         renderer = getattr(session.app, "renderer", None)
         if renderer is not None:
             try:
-                renderer.erase()  # Clear old prompt rendering from terminal
-                renderer.reset()  # Forget previous state → force full redraw
+                renderer.reset()
             except Exception:
                 pass
+
         _original_on_resize()
 
     session.app._on_resize = _patched_on_resize
