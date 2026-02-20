@@ -41,6 +41,7 @@ from code_puppy.keymap import (
 )
 from code_puppy.messaging import emit_info
 from code_puppy.terminal_utils import (
+    check_and_fix_terminal_size,
     install_sigwinch_handler,
     print_truecolor_warning,
     reset_unix_terminal,
@@ -521,6 +522,10 @@ async def interactive_mode(message_renderer, initial_command: str = None) -> Non
     while True:
         from code_puppy.agents.agent_manager import get_current_agent
         from code_puppy.messaging import emit_info
+
+        # Check if terminal was resized since last prompt and fix cursor position
+        # This catches resize events that occurred during agent processing
+        check_and_fix_terminal_size()
 
         # Get the custom prompt from the current agent, or use default
         current_agent = get_current_agent()

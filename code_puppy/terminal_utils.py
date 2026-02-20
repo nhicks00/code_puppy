@@ -23,6 +23,7 @@ _resize_handler_installed: bool = False
 _last_terminal_size: Optional[Tuple[int, int]] = None
 _resize_callback: Optional[Callable[[], None]] = None
 _original_sigwinch_handler: Optional[Callable] = None
+_original_sigcont_handler: Optional[Callable] = None
 
 
 def reset_windows_terminal_ansi() -> None:
@@ -479,26 +480,17 @@ def get_terminal_size() -> Tuple[int, int]:
 def _handle_sigwinch(signum: int, frame) -> None:
     """Internal SIGWINCH handler.
 
-    Called when the terminal is resized. Triggers screen refresh to
-    prevent display corruption from stale cursor positions.
+    Called when the terminal is resized. Scrolls the cursor to the bottom
+    of the new terminal size to prevent the "floating prompt" issue where
+    content stays mid-screen with empty space below.
     """
-    global _last_terminal_size, _resize_callback
+    global _last_terminal_size
 
     new_size = get_terminal_size()
-    old_size = _last_terminal_size
     _last_terminal_size = new_size
 
-    # Only refresh if size actually changed significantly
-    if old_size is not None:
-        old_cols, old_rows = old_size
-        new_cols, new_rows = new_size
-
-        # Check for significant change (more than just 1-2 character jitter)
-        if abs(new_cols - old_cols) <= 2 and abs(new_rows - old_rows) <= 2:
-            return
-
-    # Perform terminal refresh to fix cursor position and screen state
-    refresh_terminal_on_resize()
+    # Scroll cursor to bottom and clear artifacts
+    scroll_to_bottom()
 
     # Call registered callback if any
     if _resize_callback is not None:
@@ -508,64 +500,115 @@ def _handle_sigwinch(signum: int, frame) -> None:
             pass  # Don't let callback errors crash the signal handler
 
 
+def _handle_sigcont(signum: int, frame) -> None:
+    """Internal SIGCONT handler.
+
+    Called when the process is resumed (e.g., after fg from Ctrl+Z, or
+    after terminal close/reopen). Re-queries terminal geometry and
+    scrolls to bottom to fix cursor positioning.
+    """
+    global _last_terminal_size
+
+    new_size = get_terminal_size()
+    _last_terminal_size = new_size
+
+    # Always scroll to bottom on resume — the terminal state is almost
+    # certainly stale after a suspend/resume cycle
+    scroll_to_bottom()
+
+    # Chain to original SIGCONT handler if there was one
+    if _original_sigcont_handler is not None:
+        if callable(_original_sigcont_handler):
+            try:
+                _original_sigcont_handler(signum, frame)
+            except Exception:
+                pass
+
+
 def refresh_terminal_on_resize() -> None:
     """Refresh terminal display after a resize event.
 
-    This clears the screen state and repositions the cursor to prevent
-    the display corruption that occurs when terminal geometry changes
-    but the application's internal state is stale.
+    Clears from the cursor to the end of the screen and resets
+    ANSI attributes. Use scroll_to_bottom() for a more thorough
+    fix that also repositions the cursor.
     """
     if platform.system() == "Windows":
-        # Windows doesn't have SIGWINCH, handled differently
         return
 
     try:
-        # ANSI escape sequences for terminal refresh:
-        # \x1b[2J - Clear entire screen
-        # \x1b[H  - Move cursor to home position (top-left)
-        # \x1b[0m - Reset all attributes
-        #
-        # Note: We use a softer approach that doesn't lose context:
-        # Just reset cursor position tracking and clear below cursor
-        #
-        # \x1b[0m  - Reset attributes
-        # \x1b[J   - Clear from cursor to end of screen
         sys.stdout.write("\x1b[0m\x1b[J")
         sys.stdout.flush()
     except Exception:
-        pass  # Best effort - don't crash on I/O errors
+        pass
 
 
-def install_sigwinch_handler(callback: Optional[Callable[[], None]] = None) -> bool:
-    """Install a SIGWINCH handler for terminal resize events.
+def check_and_fix_terminal_size() -> bool:
+    """Check if terminal size changed and fix cursor position if needed.
 
-    This handler automatically refreshes the terminal display when
-    the terminal is resized, preventing display corruption.
+    Call this before rendering prompts to catch resize events that
+    occurred while prompt_toolkit or other components weren't listening.
+
+    Returns:
+        True if terminal was resized and cursor was repositioned,
+        False if no resize was detected.
+    """
+    global _last_terminal_size
+
+    if platform.system() == "Windows":
+        return False
+
+    current_size = get_terminal_size()
+
+    if _last_terminal_size is None:
+        _last_terminal_size = current_size
+        return False
+
+    old_cols, old_rows = _last_terminal_size
+    new_cols, new_rows = current_size
+
+    # Detect significant size change
+    if abs(new_cols - old_cols) > 2 or abs(new_rows - old_rows) > 2:
+        _last_terminal_size = current_size
+        scroll_to_bottom()
+        return True
+
+    _last_terminal_size = current_size
+    return False
+
+
+def install_sigwinch_handler(
+    callback: Optional[Callable[[], None]] = None,
+) -> bool:
+    """Install SIGWINCH and SIGCONT handlers for terminal resize/resume.
+
+    SIGWINCH handles terminal resize events (window resize, monitor change).
+    SIGCONT handles process resume events (terminal close/reopen, fg after
+    Ctrl+Z).
+
+    Both handlers scroll the cursor to the bottom of the terminal to
+    prevent display corruption.
 
     Args:
         callback: Optional callback function to invoke on resize.
                   The callback receives no arguments.
 
     Returns:
-        True if handler was installed successfully, False otherwise.
-        Always returns False on Windows (no SIGWINCH support).
+        True if handlers were installed successfully, False otherwise.
+        Always returns False on Windows (no SIGWINCH/SIGCONT support).
     """
     global _resize_handler_installed, _last_terminal_size, _resize_callback
-    global _original_sigwinch_handler
+    global _original_sigwinch_handler, _original_sigcont_handler
 
-    # SIGWINCH doesn't exist on Windows
     if platform.system() == "Windows":
         return False
 
     # Don't reinstall if already installed
     if _resize_handler_installed:
-        # But do update the callback if provided
         if callback is not None:
             _resize_callback = callback
         return True
 
     try:
-        # Check if SIGWINCH exists (it's Unix-only)
         if not hasattr(signal, "SIGWINCH"):
             return False
 
@@ -573,13 +616,18 @@ def install_sigwinch_handler(callback: Optional[Callable[[], None]] = None) -> b
         _last_terminal_size = get_terminal_size()
         _resize_callback = callback
 
-        # Save original handler for cleanup
+        # Save original handlers for cleanup
         _original_sigwinch_handler = signal.getsignal(signal.SIGWINCH)
 
-        # Install our handler
+        # Install SIGWINCH handler
         signal.signal(signal.SIGWINCH, _handle_sigwinch)
-        _resize_handler_installed = True
 
+        # Also install SIGCONT handler for resume events
+        if hasattr(signal, "SIGCONT"):
+            _original_sigcont_handler = signal.getsignal(signal.SIGCONT)
+            signal.signal(signal.SIGCONT, _handle_sigcont)
+
+        _resize_handler_installed = True
         return True
 
     except Exception:
@@ -587,26 +635,31 @@ def install_sigwinch_handler(callback: Optional[Callable[[], None]] = None) -> b
 
 
 def uninstall_sigwinch_handler() -> bool:
-    """Uninstall the SIGWINCH handler and restore original.
+    """Uninstall the SIGWINCH and SIGCONT handlers and restore originals.
 
     Returns:
-        True if handler was uninstalled, False otherwise.
+        True if handlers were uninstalled, False otherwise.
     """
-    global _resize_handler_installed, _resize_callback, _original_sigwinch_handler
+    global _resize_handler_installed, _resize_callback
+    global _original_sigwinch_handler, _original_sigcont_handler
 
     if platform.system() == "Windows":
         return False
 
     if not _resize_handler_installed:
-        return True  # Already not installed
+        return True
 
     try:
         if hasattr(signal, "SIGWINCH") and _original_sigwinch_handler is not None:
             signal.signal(signal.SIGWINCH, _original_sigwinch_handler)
 
+        if hasattr(signal, "SIGCONT") and _original_sigcont_handler is not None:
+            signal.signal(signal.SIGCONT, _original_sigcont_handler)
+
         _resize_handler_installed = False
         _resize_callback = None
         _original_sigwinch_handler = None
+        _original_sigcont_handler = None
 
         return True
 

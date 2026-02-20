@@ -1,6 +1,6 @@
-"""Tests for terminal resize (SIGWINCH) handling.
+"""Tests for terminal resize (SIGWINCH/SIGCONT) handling.
 
-Tests the functionality added to handle terminal resize events
+Tests the functionality added to handle terminal resize and resume events
 and prevent display corruption.
 """
 
@@ -11,6 +11,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from code_puppy.terminal_utils import (
+    check_and_fix_terminal_size,
     get_terminal_size,
     install_sigwinch_handler,
     is_sigwinch_handler_installed,
@@ -55,7 +56,6 @@ class TestRefreshTerminalOnResize:
             refresh_terminal_on_resize()
             mock_stdout.write.assert_called()
             mock_stdout.flush.assert_called()
-            # Verify ANSI sequences were written
             call_args = mock_stdout.write.call_args[0][0]
             assert "\x1b[" in call_args
 
@@ -71,8 +71,91 @@ class TestRefreshTerminalOnResize:
         """Test that I/O errors during refresh don't raise exceptions."""
         with patch("code_puppy.terminal_utils.sys.stdout") as mock_stdout:
             mock_stdout.write.side_effect = IOError("Terminal write failed")
-            # Should not raise
             refresh_terminal_on_resize()
+
+
+class TestScrollToBottom:
+    """Tests for scroll_to_bottom function."""
+
+    @pytest.mark.skipif(platform.system() == "Windows", reason="Unix-only test")
+    def test_writes_ansi_sequences(self):
+        """Test that scroll_to_bottom writes ANSI escape sequences on Unix."""
+        with patch("code_puppy.terminal_utils.sys.stdout") as mock_stdout:
+            with patch(
+                "code_puppy.terminal_utils.shutil.get_terminal_size"
+            ) as mock_size:
+                mock_size.return_value = MagicMock(lines=24, columns=80)
+                scroll_to_bottom()
+                mock_stdout.write.assert_called()
+                mock_stdout.flush.assert_called()
+                call_args = mock_stdout.write.call_args[0][0]
+                assert "\x1b[" in call_args
+                assert "24" in call_args  # Should reference row 24
+
+    @pytest.mark.skipif(platform.system() != "Windows", reason="Windows-only test")
+    def test_no_op_on_windows(self):
+        """Test that scroll_to_bottom is a no-op on Windows."""
+        with patch("code_puppy.terminal_utils.sys.stdout") as mock_stdout:
+            scroll_to_bottom()
+            mock_stdout.write.assert_not_called()
+
+    @pytest.mark.skipif(platform.system() == "Windows", reason="Unix-only test")
+    def test_handles_io_errors_gracefully(self):
+        """Test that I/O errors during scroll don't raise exceptions."""
+        with patch("code_puppy.terminal_utils.sys.stdout") as mock_stdout:
+            mock_stdout.write.side_effect = IOError("Terminal write failed")
+            scroll_to_bottom()
+
+
+class TestCheckAndFixTerminalSize:
+    """Tests for check_and_fix_terminal_size function."""
+
+    def setup_method(self):
+        """Reset state before each test."""
+        import code_puppy.terminal_utils as tu
+
+        self._saved_size = tu._last_terminal_size
+
+    def teardown_method(self):
+        """Restore state after each test."""
+        import code_puppy.terminal_utils as tu
+
+        tu._last_terminal_size = self._saved_size
+
+    @pytest.mark.skipif(platform.system() == "Windows", reason="Unix-only test")
+    def test_detects_significant_resize(self):
+        """Test that significant size changes are detected."""
+        import code_puppy.terminal_utils as tu
+
+        tu._last_terminal_size = (80, 24)
+
+        with patch.object(tu, "get_terminal_size", return_value=(120, 40)):
+            with patch.object(tu, "scroll_to_bottom") as mock_scroll:
+                result = check_and_fix_terminal_size()
+                assert result is True
+                mock_scroll.assert_called_once()
+
+    @pytest.mark.skipif(platform.system() == "Windows", reason="Unix-only test")
+    def test_ignores_small_resize(self):
+        """Test that small size changes (jitter) are ignored."""
+        import code_puppy.terminal_utils as tu
+
+        tu._last_terminal_size = (80, 24)
+
+        with patch.object(tu, "get_terminal_size", return_value=(81, 25)):
+            with patch.object(tu, "scroll_to_bottom") as mock_scroll:
+                result = check_and_fix_terminal_size()
+                assert result is False
+                mock_scroll.assert_not_called()
+
+    @pytest.mark.skipif(platform.system() == "Windows", reason="Unix-only test")
+    def test_returns_false_when_no_prior_size(self):
+        """Test returns False on first call (no prior size to compare)."""
+        import code_puppy.terminal_utils as tu
+
+        tu._last_terminal_size = None
+        result = check_and_fix_terminal_size()
+        assert result is False
 
 
 @pytest.mark.skipif(
@@ -127,77 +210,48 @@ class TestSigwinchHandler:
 
     def test_callback_is_called_on_resize(self):
         """Test that callback is invoked when SIGWINCH is received."""
+        import os
+        import time
+
         callback = MagicMock()
         install_sigwinch_handler(callback=callback)
 
-        # Manually trigger SIGWINCH to test the handler
-        # We need to patch _last_terminal_size to force a "significant" change
-        import code_puppy.terminal_utils as tu
-
-        old_size = tu._last_terminal_size
-        tu._last_terminal_size = (80, 24)  # Set a baseline
-
-        # Simulate a significant resize
-        with patch.object(tu, "get_terminal_size", return_value=(120, 40)):
-            # Send SIGWINCH to ourselves
-            import os
-
-            os.kill(os.getpid(), signal.SIGWINCH)
-
-        # Give the signal a moment to be processed
-        import time
-
+        os.kill(os.getpid(), signal.SIGWINCH)
         time.sleep(0.1)
 
-        # Callback should have been called
         callback.assert_called()
-
-        # Restore
-        tu._last_terminal_size = old_size
 
     def test_callback_errors_dont_crash(self):
         """Test that callback errors don't crash the signal handler."""
+        import os
+        import time
+
         callback = MagicMock(side_effect=ValueError("Callback error"))
         install_sigwinch_handler(callback=callback)
 
-        import code_puppy.terminal_utils as tu
-
-        tu._last_terminal_size = (80, 24)
-
-        with patch.object(tu, "get_terminal_size", return_value=(120, 40)):
-            # Should not raise despite callback error
-            import os
-
-            os.kill(os.getpid(), signal.SIGWINCH)
-
-        import time
-
+        os.kill(os.getpid(), signal.SIGWINCH)
         time.sleep(0.1)
 
-        # Handler should have survived
         assert is_sigwinch_handler_installed() is True
 
-    def test_small_size_change_ignored(self):
-        """Test that small size changes (1-2 chars) don't trigger refresh."""
-        callback = MagicMock()
-        install_sigwinch_handler(callback=callback)
+    def test_sigcont_handler_installed(self):
+        """Test that SIGCONT handler is also installed."""
+        install_sigwinch_handler()
 
+        # Verify SIGCONT handler is our handler
         import code_puppy.terminal_utils as tu
 
-        tu._last_terminal_size = (80, 24)
+        current_handler = signal.getsignal(signal.SIGCONT)
+        assert current_handler == tu._handle_sigcont
 
-        # Simulate a tiny resize (within threshold)
-        with patch.object(tu, "get_terminal_size", return_value=(81, 25)):
-            import os
+    def test_sigcont_handler_uninstalled(self):
+        """Test that SIGCONT handler is restored on uninstall."""
+        original_handler = signal.getsignal(signal.SIGCONT)
+        install_sigwinch_handler()
+        uninstall_sigwinch_handler()
 
-            os.kill(os.getpid(), signal.SIGWINCH)
-
-        import time
-
-        time.sleep(0.1)
-
-        # Callback should NOT have been called for small change
-        callback.assert_not_called()
+        current_handler = signal.getsignal(signal.SIGCONT)
+        assert current_handler == original_handler
 
 
 @pytest.mark.skipif(platform.system() != "Windows", reason="Windows-specific test")
@@ -218,37 +272,7 @@ class TestWindowsSigwinch:
         result = uninstall_sigwinch_handler()
         assert result is False
 
-
-class TestScrollToBottom:
-    """Tests for scroll_to_bottom function."""
-
-    @pytest.mark.skipif(platform.system() == "Windows", reason="Unix-only test")
-    def test_writes_ansi_sequences(self):
-        """Test that scroll_to_bottom writes ANSI escape sequences on Unix."""
-        with patch("code_puppy.terminal_utils.sys.stdout") as mock_stdout:
-            with patch(
-                "code_puppy.terminal_utils.shutil.get_terminal_size"
-            ) as mock_size:
-                mock_size.return_value = MagicMock(lines=24, columns=80)
-                scroll_to_bottom()
-                mock_stdout.write.assert_called()
-                mock_stdout.flush.assert_called()
-                # Verify ANSI sequences include cursor positioning
-                call_args = mock_stdout.write.call_args[0][0]
-                assert "\x1b[" in call_args
-                assert "24" in call_args  # Should reference row 24
-
-    @pytest.mark.skipif(platform.system() != "Windows", reason="Windows-only test")
-    def test_no_op_on_windows(self):
-        """Test that scroll_to_bottom is a no-op on Windows."""
-        with patch("code_puppy.terminal_utils.sys.stdout") as mock_stdout:
-            scroll_to_bottom()
-            mock_stdout.write.assert_not_called()
-
-    @pytest.mark.skipif(platform.system() == "Windows", reason="Unix-only test")
-    def test_handles_io_errors_gracefully(self):
-        """Test that I/O errors during scroll don't raise exceptions."""
-        with patch("code_puppy.terminal_utils.sys.stdout") as mock_stdout:
-            mock_stdout.write.side_effect = IOError("Terminal write failed")
-            # Should not raise
-            scroll_to_bottom()
+    def test_check_and_fix_returns_false_on_windows(self):
+        """Test that check_and_fix returns False on Windows."""
+        result = check_and_fix_terminal_size()
+        assert result is False
