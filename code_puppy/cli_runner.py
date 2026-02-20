@@ -41,6 +41,7 @@ from code_puppy.keymap import (
 )
 from code_puppy.messaging import emit_info
 from code_puppy.terminal_utils import (
+    install_sigwinch_handler,
     print_truecolor_warning,
     reset_unix_terminal,
     reset_windows_terminal_ansi,
@@ -387,6 +388,10 @@ async def interactive_mode(message_renderer, initial_command: str = None) -> Non
     # Print truecolor warning LAST so it's the most visible thing on startup
     # Big ugly red box should be impossible to miss! 🔴
     print_truecolor_warning(display_console)
+
+    # Install SIGWINCH handler for terminal resize events (Unix only)
+    # This prevents display corruption when terminal geometry changes
+    install_sigwinch_handler()
 
     # Initialize the runtime agent manager
     if initial_command:
