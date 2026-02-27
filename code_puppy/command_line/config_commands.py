@@ -80,7 +80,7 @@ def handle_show_command(command: str) -> bool:
 [bold]protected_tokens:[/bold]      [cyan]{protected_tokens:,}[/cyan] recent tokens preserved
 [bold]compaction_threshold:[/bold]     [cyan]{compaction_threshold:.1%}[/cyan] context usage triggers compaction
 [bold]compaction_strategy:[/bold]   [cyan]{compaction_strategy}[/cyan] (summarization or truncation)
-[bold]resume_message_count:[/bold] [cyan]{get_resume_message_count()}[/cyan] messages shown on /resume
+[bold]resume_message_count:[/bold] [cyan]{"disabled" if get_resume_message_count() == 0 else f"{get_resume_message_count()} messages"}[/cyan] shown on /resume
 [bold]reasoning_effort:[/bold]      [cyan]{get_openai_reasoning_effort()}[/cyan]
 [bold]verbosity:[/bold]             [cyan]{get_openai_verbosity()}[/cyan]
 [bold]temperature:[/bold]           [cyan]{effective_temperature if effective_temperature is not None else "(model default)"}[/cyan]{" (per-model)" if effective_temperature != global_temperature and effective_temperature is not None else ""}

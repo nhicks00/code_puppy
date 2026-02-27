@@ -19,6 +19,7 @@ from code_puppy.command_line.autosave_menu import (
     _render_menu_panel,
     _render_message_browser_panel,
     _render_preview_panel,
+    display_resumed_history,
     interactive_autosave_picker,
 )
 
@@ -1284,3 +1285,23 @@ class TestDisplayResumedHistory:
         assert "Hello from assistant" in captured.out
         # Tool output shown
         assert "Tool result" in captured.out or "test_tool" in captured.out
+
+    def test_zero_message_count_skips_display(self, capsys):
+        """Setting num_messages=0 should skip all history output."""
+        # Create mock messages
+        messages = []
+        for i in range(5):
+            msg = MagicMock()
+            msg.kind = "request"
+            part = MagicMock()
+            part.part_kind = "user-prompt"
+            part.content = f"Message {i}"
+            msg.parts = [part]
+            messages.append(msg)
+
+        display_resumed_history(messages, num_messages=0)
+
+        captured = capsys.readouterr()
+        # Should NOT show any history content
+        assert "Session Resumed" not in captured.out
+        assert "Message" not in captured.out

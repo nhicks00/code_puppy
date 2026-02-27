@@ -249,7 +249,10 @@ def handle_load_context_command(command: str) -> bool:
     from rich.text import Text
 
     from code_puppy.agents.agent_manager import get_current_agent
-    from code_puppy.config import rotate_autosave_id
+    from code_puppy.config import (
+        finalize_autosave_session,
+        get_current_autosave_id,
+    )
     from code_puppy.messaging import emit_error, emit_info, emit_success, emit_warning
 
     tokens = command.split()
@@ -274,12 +277,16 @@ def handle_load_context_command(command: str) -> bool:
         return True
 
     agent = get_current_agent()
+
+    # Save current session before overwriting with loaded history
+    finalize_autosave_session()
+
     agent.set_message_history(history)
     total_tokens = sum(agent.estimate_tokens_for_message(m) for m in history)
 
-    # Rotate autosave id to avoid overwriting any existing autosave
+    # finalize_autosave_session() already rotated the ID — just read it
     try:
-        new_id = rotate_autosave_id()
+        new_id = get_current_autosave_id()
         autosave_info = Text.from_markup(
             f"\n[dim]Autosave session rotated to: {new_id}[/dim]"
         )

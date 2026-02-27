@@ -682,6 +682,9 @@ async def interactive_mode(message_renderer, initial_command: str = None) -> Non
                                 emit_warning("Autosave load cancelled")
                                 continue
 
+                            # Save current session before loading a new one
+                            finalize_autosave_session()
+
                             # Load the session
                             base_dir = Path(AUTOSAVE_DIR)
                             history = load_session(chosen_session, base_dir)

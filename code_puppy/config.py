@@ -1128,13 +1128,15 @@ def get_resume_message_count() -> int:
     Defaults to 50 if unset or misconfigured.
     Configurable by 'resume_message_count' key via /set command.
 
+    Set to 0 to disable the history display entirely.
+
     Example: /set resume_message_count=30
     """
     val = get_value("resume_message_count")
     try:
         configured_value = int(val) if val else 50
-        # Enforce reasonable bounds: minimum 1, maximum 100
-        return max(1, min(configured_value, 100))
+        # Enforce reasonable bounds: minimum 0 (disabled), maximum 100
+        return max(0, min(configured_value, 100))
     except (ValueError, TypeError):
         return 50
 

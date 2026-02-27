@@ -415,6 +415,7 @@ def display_resumed_history(
         history: The full message history list
         num_messages: Number of messages to display. If None, uses the
                       'resume_message_count' config value (default 50).
+                      Set to 0 to disable history display entirely.
                       Configurable via: /set resume_message_count=50
     """
     from rich.console import Console
@@ -429,6 +430,10 @@ def display_resumed_history(
     # Use config value if num_messages not explicitly provided
     if num_messages is None:
         num_messages = get_resume_message_count()
+
+    # 0 = disabled
+    if num_messages == 0:
+        return
 
     console = Console()
     total_messages = len(history)

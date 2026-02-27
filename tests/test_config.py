@@ -855,3 +855,42 @@ class TestModelSupportsSetting:
             "claude-sonnet-4": {"type": "anthropic", "name": "claude-sonnet-4"}
         }
         assert cp_config.model_supports_setting("claude-sonnet-4", "effort") is False
+
+
+class TestResumeMessageCount:
+    """Tests for the resume_message_count configuration."""
+
+    @patch("code_puppy.config.get_value")
+    def test_zero_is_valid(self, mock_get_value):
+        """Setting resume_message_count to 0 should return 0, not clamp to 1."""
+        mock_get_value.return_value = "0"
+        result = cp_config.get_resume_message_count()
+        assert result == 0
+
+    @patch("code_puppy.config.get_value")
+    def test_default_is_50(self, mock_get_value):
+        """Default value should be 50 when not configured."""
+        mock_get_value.return_value = None
+        result = cp_config.get_resume_message_count()
+        assert result == 50
+
+    @patch("code_puppy.config.get_value")
+    def test_max_is_100(self, mock_get_value):
+        """Values above 100 should be clamped to 100."""
+        mock_get_value.return_value = "200"
+        result = cp_config.get_resume_message_count()
+        assert result == 100
+
+    @patch("code_puppy.config.get_value")
+    def test_negative_clamps_to_zero(self, mock_get_value):
+        """Negative values should be clamped to 0."""
+        mock_get_value.return_value = "-5"
+        result = cp_config.get_resume_message_count()
+        assert result == 0
+
+    @patch("code_puppy.config.get_value")
+    def test_invalid_returns_default(self, mock_get_value):
+        """Invalid (non-numeric) values should return the default 50."""
+        mock_get_value.return_value = "not_a_number"
+        result = cp_config.get_resume_message_count()
+        assert result == 50

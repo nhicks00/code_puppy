@@ -390,7 +390,11 @@ class TestHandleLoadContextCommand:
                 "code_puppy.agents.agent_manager.get_current_agent",
                 return_value=agent,
             ),
-            patch("code_puppy.config.rotate_autosave_id", return_value="new_id"),
+            patch("code_puppy.config.finalize_autosave_session"),
+            patch(
+                "code_puppy.config.get_current_autosave_id",
+                return_value="new_id",
+            ),
             patch("code_puppy.messaging.emit_success"),
             patch("code_puppy.command_line.autosave_menu.display_resumed_history"),
         ):
@@ -409,7 +413,10 @@ class TestHandleLoadContextCommand:
                 return_value=agent,
             ),
             patch(
-                "code_puppy.config.rotate_autosave_id",
+                "code_puppy.config.finalize_autosave_session",
+            ),
+            patch(
+                "code_puppy.config.get_current_autosave_id",
                 side_effect=Exception("fail"),
             ),
             patch("code_puppy.messaging.emit_success"),
