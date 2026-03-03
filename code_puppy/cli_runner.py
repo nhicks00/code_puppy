@@ -27,6 +27,7 @@ from code_puppy.config import (
     AUTOSAVE_DIR,
     COMMAND_HISTORY_FILE,
     DBOS_DATABASE_URL,
+    auto_save_session_if_enabled,
     ensure_config_exists,
     finalize_autosave_session,
     get_use_dbos,
@@ -578,6 +579,8 @@ async def interactive_mode(message_renderer, initial_command: str = None) -> Non
                 except asyncio.CancelledError:
                     pass  # Expected when cancelling
 
+            # Save session before exiting so history is not lost
+            auto_save_session_if_enabled()
             break
 
         # Check for exit commands (plain text or command form)
@@ -598,6 +601,8 @@ async def interactive_mode(message_renderer, initial_command: str = None) -> Non
                 except asyncio.CancelledError:
                     pass  # Expected when cancelling
 
+            # Save session before exiting so history is not lost
+            auto_save_session_if_enabled()
             # The renderer is stopped in the finally block of main().
             break
 
@@ -760,6 +765,8 @@ async def interactive_mode(message_renderer, initial_command: str = None) -> Non
                         from code_puppy.messaging import emit_warning
 
                         emit_warning("🍩 Wiggum loop stopped due to cancellation")
+                    # Save session even on cancellation/error so history is not lost
+                    auto_save_session_if_enabled()
                     continue
                 # Get the structured response
                 agent_response = result.output
@@ -796,8 +803,6 @@ async def interactive_mode(message_renderer, initial_command: str = None) -> Non
                 get_queue_console().print_exception()
 
             # Auto-save session if enabled (moved outside the try block to avoid being swallowed)
-            from code_puppy.config import auto_save_session_if_enabled
-
             auto_save_session_if_enabled()
 
             # ================================================================
@@ -873,12 +878,14 @@ async def interactive_mode(message_renderer, initial_command: str = None) -> Non
                 except KeyboardInterrupt:
                     emit_warning("\n🍩 Wiggum loop interrupted by Ctrl+C")
                     stop_wiggum()
+                    auto_save_session_if_enabled()
                     break
                 except Exception as e:
                     from code_puppy.messaging import emit_error
 
                     emit_error(f"Wiggum loop error: {e}")
                     stop_wiggum()
+                    auto_save_session_if_enabled()
                     break
 
             # Re-disable Ctrl+C if needed (uvx mode) - must be done after
