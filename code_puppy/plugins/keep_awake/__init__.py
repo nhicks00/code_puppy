@@ -1,0 +1,1 @@
+"""Keep-awake plugin package."""
