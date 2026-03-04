@@ -140,8 +140,8 @@ class TestSessionSavedOnCancellation:
             },
         )
 
-        # Should have been called at least once for the cancelled prompt
-        mock_save.assert_called()
+        # One save for cancelled prompt + one save for /exit
+        assert mock_save.call_count == 2
 
 
 class TestSessionSavedOnExit:
@@ -153,7 +153,7 @@ class TestSessionSavedOnExit:
         mock_save = await _run_interactive(
             AsyncMock(side_effect=EOFError),
         )
-        mock_save.assert_called()
+        mock_save.assert_called_once()
 
     @pytest.mark.anyio
     async def test_save_called_on_exit_command(self):
@@ -166,7 +166,7 @@ class TestSessionSavedOnExit:
                 ),
             },
         )
-        mock_save.assert_called()
+        mock_save.assert_called_once()
 
     @pytest.mark.anyio
     async def test_save_called_on_quit_command(self):
@@ -179,7 +179,7 @@ class TestSessionSavedOnExit:
                 ),
             },
         )
-        mock_save.assert_called()
+        mock_save.assert_called_once()
 
 
 class TestSessionSavedOnWiggumError:
